@@ -1,0 +1,12 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "linux",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/client/build/client",
+            "cwd": "${workspaceFolder}",
+        }
+    ]
+}
