@@ -1,7 +1,0 @@
-cmake_minimum_required(VERSION 3.10)
-project(server)
-add_compile_options(-Wall -g3)
-add_subdirectory(.. proxy)
-aux_source_directory(. server)
-add_executable(${PROJECT_NAME} ${server})
-target_link_libraries(${PROJECT_NAME} proxy ssl protobuf)

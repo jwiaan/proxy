@@ -1,0 +1,23 @@
+syntax = "proto3";
+
+package proxy;
+
+message Req {
+    string host = 1;
+    string port = 2;
+}
+
+message Resp {
+    bool result = 1;
+    uint32 host = 2;
+    uint32 port = 3;
+}
+
+message Msg {
+    uint32 id = 1;
+    oneof msg {
+        Req req = 2;
+        Resp resp = 3;
+        bytes data = 4;
+    }
+}

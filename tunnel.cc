@@ -1,92 +1,184 @@
 #include "tunnel.h"
 #include "common.h"
 
-struct Header {
-  uint32_t id = 0;
-  uint16_t type = 0;
-  uint16_t size = 0;
-};
-
-class TunnelImpl : public Tunnel {
+namespace impl {
+class Tunnel : public ::Tunnel {
 public:
-  TunnelImpl(SSL *ssl) : _ssl(ssl) { LOG(_ssl); }
-  ~TunnelImpl();
-  int fd() const override { return SSL_get_fd(_ssl); }
-  bool read(common::Msg &) override;
-  bool write(const common::Msg &) override;
+  Tunnel(int, SSL_CTX *, bool);
+  ~Tunnel();
+  int fd() const override { return _fd; }
+  bool writeAll() override;
+  bool sendMsg(const std::string &) override;
+  bool recvMsgs(std::vector<std::string> &) override;
 
 private:
-  bool read(char *, size_t);
-  bool write(const char *, size_t);
+  bool readAll();
+  bool write();
+  bool read(std::vector<std::string> &);
+  bool read();
+  void readMsgs(std::vector<std::string> &);
+  bool check() const;
 
 private:
+  int _fd;
   SSL *_ssl;
+  BIO *_rbio, *_wbio;
+  std::string _in;
+  std::queue<std::string> _out;
 };
 
-TunnelImpl::~TunnelImpl() {
-  auto fd = SSL_get_fd(_ssl);
+Tunnel::Tunnel(int fd, SSL_CTX *ctx, bool cli) : _fd(fd) {
+  BIO_socket_nbio(_fd, 1);
+  _rbio = BIO_new(BIO_s_mem());
+  _wbio = BIO_new(BIO_s_mem());
+  _ssl = SSL_new(ctx);
+  SSL_set_bio(_ssl, _rbio, _wbio);
+  if (cli)
+    SSL_set_connect_state(_ssl);
+  else
+    SSL_set_accept_state(_ssl);
+}
+
+Tunnel::~Tunnel() {
   SSL_shutdown(_ssl);
   SSL_free(_ssl);
-  close(fd);
-  LOG(_ssl);
+  close(_fd);
 }
 
-bool TunnelImpl::read(common::Msg &msg) {
-  Header h;
-  if (!read(reinterpret_cast<char *>(&h), sizeof(h)))
-    return false;
-
-  msg.id = ntohl(h.id);
-  msg.type = ntohs(h.type);
-  msg.msg.resize(ntohs(h.size));
-  return read(const_cast<char *>(msg.msg.data()), msg.msg.size());
-}
-
-bool TunnelImpl::write(const common::Msg &msg) {
-  Header h;
-  h.id = htonl(msg.id);
-  h.type = htons(msg.type);
-  h.size = htons(msg.msg.size());
-
-  std::string s(reinterpret_cast<char *>(&h), sizeof(h));
-  s += msg.msg;
-  return write(s.data(), s.size());
-}
-
-bool TunnelImpl::read(char *p, size_t s) {
-  while (s) {
-    auto n = SSL_read(_ssl, p, s);
-    if (n <= 0) {
-      int e = SSL_get_error(_ssl, n);
-      if (e == SSL_ERROR_WANT_READ)
+bool Tunnel::writeAll() {
+  while (BIO_ctrl_pending(_wbio)) {
+    char *p;
+    auto l = BIO_get_mem_data(_wbio, &p);
+    auto n = ::write(_fd, p, l);
+    if (n < 0) {
+      if (errno == EAGAIN)
         return true;
 
-      ERR("SSL_read: ", e);
+      ERR("write ", strerror(errno));
       return false;
     }
 
-    p += n;
-    s -= n;
+    char b[n];
+    size_t s;
+    auto a = BIO_read_ex(_wbio, b, n, &s);
+    assert(a == 1);
+    assert(s == static_cast<size_t>(n));
   }
 
   return true;
 }
 
-bool TunnelImpl::write(const char *p, size_t s) {
-  while (s) {
-    auto n = SSL_write(_ssl, p, s);
-    if (n <= 0) {
-      ERR("SSL_write: ", SSL_get_error(_ssl, n));
+bool Tunnel::readAll() {
+  while (true) {
+    char b[1024 * 1024];
+    auto n = ::read(_fd, b, sizeof(b));
+    if (n < 0) {
+      if (errno == EAGAIN)
+        return true;
+
+      ERR("read: ", strerror(errno));
       return false;
     }
 
-    p += n;
-    s -= n;
+    if (n == 0)
+      return false;
+
+    size_t s;
+    auto a = BIO_write_ex(_rbio, b, n, &s);
+    assert(a == 1);
+    assert(s == static_cast<size_t>(n));
+  }
+}
+
+bool Tunnel::sendMsg(const std::string &s) {
+  assert(s.size() <= UINT32_MAX);
+  uint32_t size = s.size();
+  size = htonl(size);
+  _out.emplace(reinterpret_cast<char *>(&size), sizeof(size));
+  _out.back() += s;
+  return write();
+}
+
+bool Tunnel::write() {
+  while (!_out.empty()) {
+    size_t n;
+    auto a = SSL_write_ex(_ssl, _out.front().data(), _out.front().size(), &n);
+    if (!writeAll())
+      return false;
+
+    if (!a)
+      return check();
+
+    assert(n == _out.front().size());
+    _out.pop();
   }
 
   return true;
 }
 
-std::shared_ptr<Tunnel> Tunnel::create(SSL *ssl) {
-  return std::make_shared<TunnelImpl>(ssl);
+bool Tunnel::recvMsgs(std::vector<std::string> &msgs) {
+  if (!readAll())
+    return false;
+
+  if (!write())
+    return false;
+
+  return read(msgs);
+}
+
+bool Tunnel::read(std::vector<std::string> &v) {
+  if (!read())
+    return false;
+
+  readMsgs(v);
+  return true;
+}
+
+bool Tunnel::read() {
+  while (true) {
+    char b[1024 * 1024];
+    size_t n;
+    auto a = SSL_read_ex(_ssl, b, sizeof(b), &n);
+    if (!writeAll())
+      return false;
+
+    if (!a)
+      return check();
+
+    _in += std::string(b, n);
+  }
+}
+
+void Tunnel::readMsgs(std::vector<std::string> &v) {
+  while (!_in.empty()) {
+    uint32_t size;
+    if (_in.size() < sizeof(size))
+      return;
+
+    size = *reinterpret_cast<uint32_t *>(_in.data());
+    size = ntohl(size);
+    size_t n = sizeof(size) + size;
+    if (_in.size() < n)
+      return;
+
+    v.emplace_back(&_in.at(sizeof(size)), size);
+    _in.erase(0, n);
+  }
+}
+
+bool Tunnel::check() const {
+  auto e = SSL_get_error(_ssl, 0);
+  if (e == SSL_ERROR_WANT_READ) {
+    assert(!BIO_ctrl_pending(_rbio));
+    return true;
+  }
+
+  ERR(e);
+  assert(0);
+  return false;
+}
+} // namespace impl
+
+std::shared_ptr<Tunnel> Tunnel::create(int fd, SSL_CTX *ctx, bool cli) {
+  return std::make_shared<impl::Tunnel>(fd, ctx, cli);
 }

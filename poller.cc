@@ -1,65 +1,34 @@
 #include "poller.h"
 #include "common.h"
+#include "file.h"
 
-class PollerImpl : public Poller {
+namespace impl {
+class Poller : public ::Poller {
 public:
-  PollerImpl() { _fd = epoll_create1(0); }
-  ~PollerImpl() { close(_fd); }
-  int add(int, void *) override;
-  int wait(epoll_event *, int) override;
-  std::string print(uint32_t) const override;
+  Poller() { _fd = epoll_create1(0); }
+  ~Poller() { close(_fd); }
+  void add(std::shared_ptr<File>, uint32_t) override;
+  int wait(std::vector<epoll_event> &) override;
 
 private:
   int _fd;
 };
 
-int PollerImpl::add(int fd, void *ptr) {
+void Poller::add(std::shared_ptr<File> f, uint32_t u) {
   epoll_event e;
-  e.events = EPOLLIN;
-  e.data.ptr = ptr;
-  return epoll_ctl(_fd, EPOLL_CTL_ADD, fd, &e);
+  e.data.ptr = f.get();
+  e.events = u;
+  auto a = epoll_ctl(_fd, EPOLL_CTL_ADD, f->fd(), &e);
+  assert(!a);
 }
 
-int PollerImpl::wait(epoll_event *e, int n) {
-  return epoll_wait(_fd, e, n, -1);
+int Poller::wait(std::vector<epoll_event> &v) {
+  auto a = epoll_wait(_fd, v.data(), v.size(), -1);
+  assert(a > 0);
+  return a;
 }
-
-std::string PollerImpl::print(uint32_t e) const {
-  std::string s;
-  if (e & EPOLLIN)
-    s += "EPOLLIN|";
-  if (e & EPOLLPRI)
-    s += "EPOLLPRI|";
-  if (e & EPOLLOUT)
-    s += "EPOLLOUT|";
-  if (e & EPOLLRDNORM)
-    s += "EPOLLRDNORM|";
-  if (e & EPOLLRDBAND)
-    s += "EPOLLRDBAND|";
-  if (e & EPOLLWRNORM)
-    s += "EPOLLWRNORM|";
-  if (e & EPOLLWRBAND)
-    s += "EPOLLWRBAND|";
-  if (e & EPOLLMSG)
-    s += "EPOLLMSG|";
-  if (e & EPOLLERR)
-    s += "EPOLLERR|";
-  if (e & EPOLLHUP)
-    s += "EPOLLHUP|";
-  if (e & EPOLLRDHUP)
-    s += "EPOLLRDHUP|";
-  if (e & EPOLLEXCLUSIVE)
-    s += "EPOLLEXCLUSIVE|";
-  if (e & EPOLLWAKEUP)
-    s += "EPOLLWAKEUP|";
-  if (e & EPOLLONESHOT)
-    s += "EPOLLONESHOT|";
-  if (e & EPOLLET)
-    s += "EPOLLET|";
-  s.pop_back();
-  return s;
-}
+} // namespace impl
 
 std::shared_ptr<Poller> Poller::create() {
-  return std::make_shared<PollerImpl>();
+  return std::make_shared<impl::Poller>();
 }

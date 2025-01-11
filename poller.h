@@ -2,11 +2,13 @@
 
 #include <memory>
 #include <sys/epoll.h>
+#include <vector>
+
+struct File;
 
 struct Poller {
   virtual ~Poller() = default;
-  virtual int add(int, void *) = 0;
-  virtual int wait(epoll_event *, int) = 0;
-  virtual std::string print(uint32_t) const = 0;
+  virtual void add(std::shared_ptr<File>, uint32_t) = 0;
+  virtual int wait(std::vector<epoll_event> &) = 0;
   static std::shared_ptr<Poller> create();
 };

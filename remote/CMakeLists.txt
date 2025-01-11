@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 3.10)
+project(remote)
+add_compile_options(-Wall -g3)
+aux_source_directory(. remote)
+add_executable(${PROJECT_NAME} ${remote})
+target_link_libraries(${PROJECT_NAME} proxy protobuf ssl crypto)
