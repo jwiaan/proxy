@@ -9,11 +9,11 @@ struct Result {
 namespace impl {
 class Connector : public ::Connector {
 public:
-  Connector() { pipe(_pipe); }
+  Connector();
   ~Connector();
   int fd() const override { return _pipe[0]; }
   void connect(uint32_t, const std::string &, const std::string &) override;
-  int connect(uint32_t &) override;
+  int connect(uint32_t &, std::string &) override;
 
 private:
   void thread(uint32_t, const std::string &, const std::string &);
@@ -21,7 +21,10 @@ private:
 
 private:
   int _pipe[2];
+  std::map<uint32_t, std::string> _names;
 };
+
+Connector::Connector() { pipe(_pipe); }
 
 Connector::~Connector() {
   close(_pipe[0]);
@@ -30,6 +33,8 @@ Connector::~Connector() {
 
 void Connector::connect(uint32_t id, const std::string &host,
                         const std::string &port) {
+  assert(_names.find(id) == _names.end());
+  _names[id] = host + ":" + port;
   std::thread t(&Connector::thread, this, id, host, port);
   t.detach();
 }
@@ -71,11 +76,13 @@ int Connector::connect(const std::string &host, const std::string &port) {
   return -1;
 }
 
-int Connector::connect(uint32_t &id) {
+int Connector::connect(uint32_t &id, std::string &name) {
   Result res;
   auto n = read(_pipe[0], &res, sizeof(res));
   assert(n == sizeof(res));
   id = res.id;
+  name = _names.at(id);
+  _names.erase(id);
   return res.fd;
 }
 } // namespace impl

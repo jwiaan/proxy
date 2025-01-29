@@ -1,34 +1,21 @@
 #include "poller.h"
 #include "common.h"
-#include "file.h"
+#include "handler.h"
 
-namespace impl {
-class Poller : public ::Poller {
-public:
-  Poller() { _fd = epoll_create1(0); }
-  ~Poller() { close(_fd); }
-  void add(std::shared_ptr<File>, uint32_t) override;
-  int wait(std::vector<epoll_event> &) override;
+Poller::Poller() { _fd = epoll_create1(0); }
 
-private:
-  int _fd;
-};
+Poller::~Poller() { close(_fd); }
 
-void Poller::add(std::shared_ptr<File> f, uint32_t u) {
+void Poller::add(std::shared_ptr<Handler> h, uint32_t u) {
   epoll_event e;
-  e.data.ptr = f.get();
+  e.data.ptr = h.get();
   e.events = u;
-  auto a = epoll_ctl(_fd, EPOLL_CTL_ADD, f->fd(), &e);
+  auto a = epoll_ctl(_fd, EPOLL_CTL_ADD, h->fd(), &e);
   assert(!a);
 }
 
 int Poller::wait(std::vector<epoll_event> &v) {
-  auto a = epoll_wait(_fd, v.data(), v.size(), -1);
-  assert(a > 0);
-  return a;
-}
-} // namespace impl
-
-std::shared_ptr<Poller> Poller::create() {
-  return std::make_shared<impl::Poller>();
+  auto n = epoll_wait(_fd, v.data(), v.size(), -1);
+  assert(n > 0);
+  return n;
 }

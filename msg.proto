@@ -1,7 +1,5 @@
 syntax = "proto3";
 
-package proxy;
-
 message Req {
     string host = 1;
     string port = 2;

@@ -1,0 +1,12 @@
+#!/bin/bash
+temp=`mktemp`
+for file in `find -name '*.cc' -o -name '*.h'`
+do
+	clang-format $file > $temp
+	diff $temp $file
+	if [ $? -ne 0 ]
+	then
+		echo $file
+		exit 1
+	fi
+done

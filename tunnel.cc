@@ -12,12 +12,12 @@ public:
   bool recvMsgs(std::vector<std::string> &) override;
 
 private:
+  bool check() const;
   bool readAll();
   bool write();
   bool read(std::vector<std::string> &);
   bool read();
-  void readMsgs(std::vector<std::string> &);
-  bool check() const;
+  void getMsgs(std::vector<std::string> &);
 
 private:
   int _fd;
@@ -130,7 +130,7 @@ bool Tunnel::read(std::vector<std::string> &v) {
   if (!read())
     return false;
 
-  readMsgs(v);
+  getMsgs(v);
   return true;
 }
 
@@ -149,7 +149,7 @@ bool Tunnel::read() {
   }
 }
 
-void Tunnel::readMsgs(std::vector<std::string> &v) {
+void Tunnel::getMsgs(std::vector<std::string> &v) {
   while (!_in.empty()) {
     uint32_t size;
     if (_in.size() < sizeof(size))

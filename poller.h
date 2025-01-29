@@ -4,11 +4,15 @@
 #include <sys/epoll.h>
 #include <vector>
 
-struct File;
+struct Handler;
 
-struct Poller {
-  virtual ~Poller() = default;
-  virtual void add(std::shared_ptr<File>, uint32_t) = 0;
-  virtual int wait(std::vector<epoll_event> &) = 0;
-  static std::shared_ptr<Poller> create();
+class Poller {
+protected:
+  Poller();
+  ~Poller();
+  void add(std::shared_ptr<Handler>, uint32_t);
+  int wait(std::vector<epoll_event> &);
+
+private:
+  int _fd;
 };

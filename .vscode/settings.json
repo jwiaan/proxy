@@ -1,4 +1,6 @@
 {
+    "C_Cpp.intelliSenseEngine": "disabled",
+    "editor.inlayHints.enabled": "offUnlessPressed",
     "clangd.fallbackFlags": [
         "-std=c++17"
     ]

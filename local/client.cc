@@ -1,15 +1,15 @@
 #include "client.h"
 #include "../buffer.h"
 #include "../common.h"
-#include "../proxy.pb.h"
+#include "../msg.pb.h"
 
 namespace impl {
-class Client : public ::Client {
+class Client : public ::Client, public Buffer {
 public:
-  Client(uint32_t id, int fd) : _id(id), _buffer(Buffer::create(fd)) {}
-  int fd() const override { return _buffer->fd(); }
+  Client(int fd, uint32_t id) : Buffer(fd), _id(id) {}
+  int fd() const override { return _fd; }
   uint32_t id() const override { return _id; }
-  bool writeAll() override { return _buffer->write(); }
+  bool writeAll() override { return write(); }
   bool recvMsg(std::optional<std::string> &) override;
   bool sendResp(bool, uint32_t, uint16_t) override;
   bool sendData(const std::string &) override;
@@ -22,91 +22,88 @@ private:
 private:
   uint32_t _id;
   std::string _host, _port;
-  std::shared_ptr<Buffer> _buffer;
   bool (Client::*_step)(std::optional<std::string> &) = &Client::handshake;
 };
 
-bool Client::recvMsg(std::optional<std::string> &msg) {
-  if (!_buffer->read())
+bool Client::recvMsg(std::optional<std::string> &opt) {
+  if (!read())
     return false;
 
-  return (this->*_step)(msg);
+  return (this->*_step)(opt);
 }
 
 bool Client::handshake(std::optional<std::string> &) {
-  auto a = _buffer->peek(3);
-  if (!a.has_value())
+  if (_in.size() < 3)
     return true;
 
-  std::string t = {5, 1, 0};
-  assert(a.value() == t);
+  std::string s = {5, 1, 0};
+  assert(_in == s);
+  _in.clear();
 
-  _buffer->pop(3);
-  assert(_buffer->empty());
-
-  if (!_buffer->write({5, 0}))
+  _out.push_back(5);
+  _out.push_back(0);
+  if (!write())
     return false;
 
   _step = &Client::request;
   return true;
 }
 
-bool Client::request(std::optional<std::string> &s) {
-  auto a = _buffer->peek(5);
-  if (!a.has_value())
-    return false;
-
-  std::string t = {5, 1, 0, 3};
-  assert(a.value().substr(0, 4) == t);
-
-  size_t n = 5 + a.value().at(4) + 2;
-  a = _buffer->peek(n);
-  if (!a.has_value())
+bool Client::request(std::optional<std::string> &opt) {
+  if (_in.size() < 5)
     return true;
 
-  _buffer->pop(n);
-  assert(_buffer->empty());
+  std::string s = {5, 1, 0, 3};
+  assert(_in.substr(0, 4) == s);
 
-  _host.assign(&a.value().at(5), a.value().at(4));
-  uint16_t port =
-      *reinterpret_cast<uint16_t *>(&a.value().at(5 + a.value().at(4)));
+  size_t n = 5 + _in.at(4) + 2;
+  if (_in.size() < n)
+    return true;
+
+  _host.assign(&_in.at(5), _in.at(4));
+  uint16_t port = *reinterpret_cast<uint16_t *>(&_in.at(5 + _in.at(4)));
   std::ostringstream oss;
   oss << ntohs(port);
   _port = oss.str();
 
-  proxy::Msg msg;
+  _in.erase(0, n);
+  assert(_in.empty());
+
+  Msg msg;
   msg.set_id(_id);
   auto req = msg.mutable_req();
   req->set_host(_host);
   req->set_port(_port);
-  s = msg.SerializeAsString();
-  assert(!s->empty());
+  opt = msg.SerializeAsString();
+  assert(!opt->empty());
 
   LOG(msg.DebugString());
   return true;
 }
 
-bool Client::forward(std::optional<std::string> &s) {
-  proxy::Msg msg;
+bool Client::forward(std::optional<std::string> &opt) {
+  LOG(_id, ".", _host, ":", _port, " ", _in.size(), ">");
+  Msg msg;
   msg.set_id(_id);
-  msg.set_data(_buffer->pop());
-  s = msg.SerializeAsString();
-  assert(!s->empty());
-  LOG(_id, ".", _host, ":", _port, " >", msg.data().size());
+  msg.set_data(std::move(_in));
+  opt = msg.SerializeAsString();
+  assert(!opt->empty());
+  _in.clear();
   return true;
 }
 
 bool Client::sendResp(bool res, uint32_t host, uint16_t port) {
+  assert(_step == &Client::request);
   std::string s = {5, 0, 0, 1};
   s.at(1) = res ? 0 : 1;
   s += std::string(reinterpret_cast<char *>(&host), sizeof(host));
   s += std::string(reinterpret_cast<char *>(&port), sizeof(port));
   assert(s.size() == 10);
 
-  if (!_buffer->write(s))
+  _out += s;
+  if (!write())
     return false;
 
-  assert(_step == &Client::request);
   _step = &Client::forward;
   return res;
 }
@@ -114,10 +111,11 @@ bool Client::sendResp(bool res, uint32_t host, uint16_t port) {
 bool Client::sendData(const std::string &s) {
   assert(_step == &Client::forward);
   LOG(_id, ".", _host, ":", _port, " <", s.size());
-  return _buffer->write(s);
+  _out += s;
+  return write();
 }
 } // namespace impl
 
-std::shared_ptr<Client> Client::create(uint32_t id, int fd) {
-  return std::make_shared<impl::Client>(id, fd);
+std::shared_ptr<Client> Client::create(int fd, uint32_t id) {
+  return std::make_shared<impl::Client>(fd, id);
 }

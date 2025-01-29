@@ -1,11 +1,10 @@
 #pragma once
 
-#include "file.h"
-#include <memory>
+#include "handler.h"
 #include <openssl/ssl.h>
 #include <vector>
 
-struct Tunnel : File {
+struct Tunnel : Handler {
   virtual bool writeAll() = 0;
   virtual bool recvMsgs(std::vector<std::string> &) = 0;
   virtual bool sendMsg(const std::string &) = 0;
